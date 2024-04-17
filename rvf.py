@@ -1,5 +1,5 @@
 """
-Define measles model.
+Define rvf model.
 Adapted from https://github.com/optimamodel/gavi-outbreaks/blob/main/stisim/gavi/measles.py
 Original version by @alina-muellenmeister, @domdelport, and @RomeshA
 """
@@ -8,23 +8,23 @@ import numpy as np
 import starsim as ss
 from starsim.diseases.sir import SIR
 
-__all__ = ['Measles']
+__all__ = ['rvf']
 
 
-class Measles(SIR):
+class rvf(SIR):
 
     def __init__(self, pars=None, par_dists=None, *args, **kwargs):
         """ Initialize with parameters """
 
         pars = ss.omergeleft(pars,
             # Natural history parameters, all specified in days
-            dur_exp = 8,       # (days) - source: US CDC
-            dur_inf = 11,      # (days) - source: US CDC
-            p_death = 0.005,   # Probability of death
+            dur_exp = 8,       #>> we need model how the vector transmits the disease to humans 
+            dur_inf = 6,       # time from exposure to the virus to the onset of symptoms, typically ranges from 2 to 6 days
+            p_death = 0.3,     # mortality rate for RVF in cows can range from 10% to 30% during outbreaks, but it can be higher in severe cases or in naive herds 
 
             # Initial conditions and beta
-            init_prev = 0.005,
-            beta = None,
+            init_prev = 0.5, # Prevalence rates in animals can range from a few percentage points to more than 50% in some areas during outbreaks
+            beta = 0.33,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
         )
 
         par_dists = ss.omergeleft(par_dists,
@@ -34,9 +34,9 @@ class Measles(SIR):
             p_death   = ss.bernoulli,
         )
 
-        super().__init__(pars=pars, par_dists=par_dists, *args, **kwargs)
+        super().__init__(pars=pars, par_dists=par_dists, *args, **kwargs) #?? what's the idea of this line
 
-        # SIR are added automatically, here we add E
+        # SIR are added automatically, here we add Exposed
         self.add_states(
             ss.State('exposed', bool, False),
             ss.State('ti_exposed', float, np.nan),
