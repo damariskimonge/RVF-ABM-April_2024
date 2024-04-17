@@ -6,12 +6,13 @@ Original version by @alina-muellenmeister, @domdelport, and @RomeshA
 
 import numpy as np
 import starsim as ss
-from starsim.diseases.sir import SIR
+from starsim.diseases.sir import SIS
+import pylab as pl
 
 __all__ = ['rvf']
 
 
-class rvf(SIR):
+class rvf(SIS):
 
     def __init__(self, pars=None, par_dists=None, *args, **kwargs):
         """ Initialize with parameters """
@@ -20,10 +21,10 @@ class rvf(SIR):
             # Natural history parameters, all specified in days
             dur_exp = 8,       #>> we need model how the vector transmits the disease to humans 
             dur_inf = 6,       # time from exposure to the virus to the onset of symptoms, typically ranges from 2 to 6 days
-            p_death = 0.3,     # mortality rate for RVF in cows can range from 10% to 30% during outbreaks, but it can be higher in severe cases or in naive herds 
+            p_death = 0.21,     # mortality rate for RVF in cows can range from 10% to 30% during outbreaks, but it can be higher in severe cases or in naive herds 
 
             # Initial conditions and beta
-            init_prev = 0.5, # Prevalence rates in animals can range from a few percentage points to more than 50% in some areas during outbreaks
+            init_prev = 0.38, # Prevalence rates in animals can range from a few percentage points to more than 50% in some areas during outbreaks
             beta = 0.33,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
         )
 
@@ -39,7 +40,10 @@ class rvf(SIR):
         # SIR are added automatically, here we add Exposed
         self.add_states(
             ss.State('exposed', bool, False),
+            ss.State('recovered', float, np.nan),
             ss.State('ti_exposed', float, np.nan),
+            ss.State('ti_recovered', float, np.nan),
+            ss.State('ti_dead', float, np.nan),
         )
 
         return
@@ -57,7 +61,7 @@ class rvf(SIR):
         # Progress infected -> recovered
         recovered = ss.true(self.infected & (self.ti_recovered <= sim.ti))
         self.infected[recovered] = False
-        self.recovered[recovered] = True
+        self.susceptible[recovered] = True
 
         # Trigger deaths
         deaths = ss.true(self.ti_dead <= sim.year)
@@ -98,3 +102,16 @@ class rvf(SIR):
             self.statesdict[state][uids] = False
         return
 
+if __name__ == '__main__':
+    import sciris as sc
+    import starsim as ss
+
+    rvf_disease = rvf()
+
+    pars = sc.objdict(
+        n_agents = 1000,
+        networks = 'random',
+    )
+    sim = ss.Sim(pars=pars, diseases=rvf_disease)
+    sim.run()
+    sim.plot()
