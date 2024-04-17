@@ -12,20 +12,32 @@ import pylab as pl
 __all__ = ['rvf']
 
 
+#def death_by_age(module, sim, uids, p_old=0.1, p_young=0.5):
+ #   age = sim.pars.age[uids]
+  #  death_probs = np.zeros(len(uids))
+  #  old = age == "Adult"
+  #  young = age == "Calf"
+  #  death_by_age[old] = p_old
+  #  death_by_age[young] = p_young
+  #  return death_by_age
+
+
 class rvf(SIS):
 
     def __init__(self, pars=None, par_dists=None, *args, **kwargs):
         """ Initialize with parameters """
 
         pars = ss.omergeleft(pars,
-            # Natural history parameters, all specified in days
-            dur_exp = 8,       #>> we need model how the vector transmits the disease to humans 
-            dur_inf = 6,       # time from exposure to the virus to the onset of symptoms, typically ranges from 2 to 6 days
-            p_death = 0.21,     # mortality rate for RVF in cows can range from 10% to 30% during outbreaks, but it can be higher in severe cases or in naive herds 
+            # Natural history parameters, duration specified in days
+            dur_exp = 0.01,    #  Assumption because very short
+            dur_inf = 14,       # Assumption from human duration of infection
+            p_death = 0.1,     #  In adult cattle: Rift Valley Fever Factsheet: Pennsylvania Dept of Health (2013)
 
             # Initial conditions and beta
-            init_prev = 0.38, # Prevalence rates in animals can range from a few percentage points to more than 50% in some areas during outbreaks
+            init_prev = 0.11, # A Countrywide Seroepidemiological Survey of Rift Valley Fever in Livestock, Uganda, (2017 Nyakarahuka et al 2023)
             beta = 0.33,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
+            waning = 0.05,
+            imm_boost = 1.0,   
         )
 
         par_dists = ss.omergeleft(par_dists,
@@ -41,6 +53,7 @@ class rvf(SIS):
         self.add_states(
             ss.State('exposed', bool, False),
             ss.State('recovered', float, np.nan),
+            ss.State('immunity', float, 0.0),
             ss.State('ti_exposed', float, np.nan),
             ss.State('ti_recovered', float, np.nan),
             ss.State('ti_dead', float, np.nan),
@@ -62,11 +75,19 @@ class rvf(SIS):
         recovered = ss.true(self.infected & (self.ti_recovered <= sim.ti))
         self.infected[recovered] = False
         self.susceptible[recovered] = True
+        self.update_immunity(sim)
+        #return
 
         # Trigger deaths
         deaths = ss.true(self.ti_dead <= sim.year)
         if len(deaths):
             sim.people.request_death(deaths)
+        return
+
+    def update_immunity(self, sim):
+        uids = ss.true(self.immunity > 0)
+        self.immunity[uids] = (self.immunity[uids])*(1 - self.pars.waning*sim.dt)
+        self.rel_sus[uids] = np.maximum(0, 1 - self.immunity[uids])
         return
 
     def set_prognoses(self, sim, uids, source_uids=None):
@@ -82,6 +103,7 @@ class rvf(SIS):
 
         # Determine when exposed become infected
         self.ti_infected[uids] = sim.ti + p.dur_exp.rvs(uids) / sim.dt
+        self.immunity[uids] += self.pars.imm_boost
 
         # Sample duration of infection, being careful to only sample from the
         # distribution once per timestep.
@@ -109,9 +131,12 @@ if __name__ == '__main__':
     rvf_disease = rvf()
 
     pars = sc.objdict(
+        birth_rate = 32.6, #National Animal Census of 2021
+        death_rate = 30, # National Animal Census of 2021
         n_agents = 1000,
         networks = 'random',
     )
+
     sim = ss.Sim(pars=pars, diseases=rvf_disease)
     sim.run()
     sim.plot()
