@@ -21,7 +21,7 @@ class RVF(ss.SIS):
 
             # Initial conditions and beta
             init_prev = 0.001, # Assumption
-            beta = 0.33,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
+            beta = 0.04,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
             waning = 0.05,
             imm_boost = 1.0,   
             rel_sus_0 = 1,  # Baseline level of relative susceptibility
@@ -54,6 +54,17 @@ class RVF(ss.SIS):
         self.rel_sus[sim.people.district==0] = self.pars.rel_sus_0
         self.rel_sus[sim.people.district==1] = self.pars.rel_sus_1
 
+    def init_results(self, sim):
+        """
+        Initialize results
+        """
+        super().init_results(sim)
+        self.results += [
+            ss.Result(self.name, 'new_deaths', sim.npts, dtype=int, scale=True),
+            ss.Result(self.name, 'cum_deaths', sim.npts, dtype=int, scale=True),
+        ]
+        return
+
     @property
     def infectious(self):
         return self.infected | self.exposed
@@ -73,6 +84,7 @@ class RVF(ss.SIS):
 
         # Trigger deaths
         deaths = ss.true(self.ti_dead <= sim.year)
+        self.results.new_deaths[sim.ti] = len(deaths)
         if len(deaths):
             sim.people.request_death(deaths)
         return
@@ -119,14 +131,21 @@ class RVF(ss.SIS):
         for state in ['susceptible', 'exposed', 'infected', 'recovered']:
             self.statesdict[state][uids] = False
         return
+    
+    def update_results(self, sim):
+        super().update_results(sim)
+        res = self.results
+        ti = sim.ti
+        res.cum_deaths[ti] = np.sum(res['new_deaths'][:ti+1])
+        return
 
 
 class Cattle(ss.People):
     def __init__(self, n_agents, extra_states=None):
         super().__init__(n_agents, extra_states=extra_states)
         self.pars = sc.objdict(
-            p_move_01 = 0.25, # Could update this later to vary over time
-            p_move_10 = 0.25
+            p_move_01 = 0.0006, # Could update this later to vary over time
+            p_move_10 = 0.00001
         )
         return
 
@@ -164,7 +183,13 @@ if __name__ == '__main__':
     
     # Make plots
     pl.figure()
-    pl.plot(sim.yearvec, sim.results.rvf.n_infected)
+    pl.plot(sim.yearvec, sim.results.rvf.n_infected, label = "Total Infected")
+    pl.plot(sim.yearvec, (sim.results.rvf.n_infected * 0.07), label = "Symptomatic", color = "black")
+    pl.plot(sim.yearvec, sim.results.rvf.new_deaths, label = "New Deaths", color = "red")
+    pl.plot(sim.yearvec, sim.results.rvf.cum_deaths, label = "Cumulative Deaths", color = "green")
+    pl.plot(sim.yearvec, sim.results.rvf.new_infections, label = "New Infections", color = "orange")
+    pl.axvline(np.where(sim.results.rvf.new_deaths == 1)[0][0], color = "red")
     pl.title('Number infected')
+    pl.legend()
     pl.show()
 
