@@ -34,10 +34,12 @@ class rvf(SIS):
             p_death = 0.1,     #  In adult cattle: Rift Valley Fever Factsheet: Pennsylvania Dept of Health (2013)
 
             # Initial conditions and beta
-            init_prev = 0.11, # A Countrywide Seroepidemiological Survey of Rift Valley Fever in Livestock, Uganda, (2017 Nyakarahuka et al 2023)
+            init_prev = 0.001, # Assumption
             beta = 0.33,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
             waning = 0.05,
             imm_boost = 1.0,   
+            rel_sus_0 = 1,  # Baseline level of relative susceptibility
+            rel_sus_1 = 1.2,  # Relative to in district 0
         )
 
         par_dists = ss.omergeleft(par_dists,
@@ -60,6 +62,11 @@ class rvf(SIS):
         )
 
         return
+
+    def initialize(self, sim):
+        super().initialize(sim)
+        self.rel_sus[sim.people.district==0] = self.pars.rel_sus_0
+        self.rel_sus[sim.people.district==1] = self.pars.rel_sus_1
 
     @property
     def infectious(self):
@@ -85,9 +92,12 @@ class rvf(SIS):
         return
 
     def update_immunity(self, sim):
-        uids = ss.true(self.immunity > 0)
-        self.immunity[uids] = (self.immunity[uids])*(1 - self.pars.waning*sim.dt)
-        self.rel_sus[uids] = np.maximum(0, 1 - self.immunity[uids])
+        uids_0 = ss.true((self.immunity > 0) & (sim.people.district==0))
+        uids_1 = ss.true((self.immunity > 0) & (sim.people.district==1))
+        self.immunity[uids_0] = (self.immunity[uids_0])*(1 - self.pars.waning*sim.dt)
+        self.rel_sus[uids_0] = np.maximum(0, self.pars.rel_sus_0 - self.immunity[uids_0])
+        self.immunity[uids_1] = (self.immunity[uids_1])*(1 - self.pars.waning*sim.dt)
+        self.rel_sus[uids_1] = np.maximum(0, self.pars.rel_sus_1 - self.immunity[uids_1])
         return
 
     def set_prognoses(self, sim, uids, source_uids=None):
