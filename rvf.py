@@ -13,13 +13,13 @@ __all__ = ['rvf']
 
 
 #def death_by_age(module, sim, uids, p_old=0.1, p_young=0.5):
- #   age = sim.pars.age[uids]
-  #  death_probs = np.zeros(len(uids))
-  #  old = age == "Adult"
-  #  young = age == "Calf"
-  #  death_by_age[old] = p_old
-  #  death_by_age[young] = p_young
-  #  return death_by_age
+ #   age = age[uids]
+ #   death_probs = np.zeros(len(uids))
+ #   old = age == "Adult"
+ #   young = age == "Calf"
+ #   death_probs[old] = p_old
+ #   death_probs[young] = p_young
+ #   return death_probs
 
 
 class rvf(SIS):
