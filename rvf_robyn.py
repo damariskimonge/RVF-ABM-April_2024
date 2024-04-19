@@ -145,7 +145,7 @@ class Cattle(ss.People):
         super().__init__(n_agents, extra_states=extra_states)
         self.pars = sc.objdict(
             p_move_01 = 0.0006, # Could update this later to vary over time
-            p_move_10 = 0.00001
+            p_move_10 = 0.000000001
         )
         return
 
@@ -157,6 +157,27 @@ class Cattle(ss.People):
         will_move_10 = self.pars.p_move_10 > np.random.rand(len(district1_uids))
         self.district[will_move_01] = 1
         self.district[will_move_10] = 0
+
+
+class vaccination(ss.Intervention):  # Create a new, generic treatment intervention
+
+    def __init__(self, prob=0.12, efficacy=0.623):
+        super().__init__() # Initialize the intervention
+        self.prob = prob # Store the probability of vaccination
+        self.efficacy = efficacy
+
+    def apply(self, sim):
+
+        # Define  who is eligible for vaccination
+        eligible_ids = sim.people.uid[rvf.susceptible]  # People are eligible for vacc if they are susceptible
+        n_eligible = len(eligible_ids) # Number of people who are eligible
+
+        # Define who receives  vaccination
+        is_vaccinated = np.random.rand(n_eligible) < self.prob  # Define which of the n_eligible people get treated by comparing np.random.rand() to self.p
+        vaccinated_ids = eligible_ids[is_vaccinated]  # Pull out the IDs for the people receiving the treatment
+
+        # vaccinating cattle will reduce susceptibility
+        rvf.rel_sus[vaccinated_ids] = 1-self.efficacy 
 
 
 if __name__ == '__main__':
@@ -175,21 +196,46 @@ if __name__ == '__main__':
         dt = 1,
         birth_rate = 32.6, #National Animal Census of 2021
         death_rate = 30, # National Animal Census of 2021
-        networks = "random",
+        networks = "random",    
     )
 
-    sim = ss.Sim(pars=pars, people=cattle, diseases=rvf)
-    sim.run()
+    #base_sim = ss.Sim(pars = pars, people = cattle, diseases = rvf)
+    vacc_sim = ss.Sim(pars=pars, people=cattle, diseases=rvf, interventions=vaccination)
+    
+    #base_sim.run()
+    vacc_sim.run()
+
+    # Make sim.results.rvf.new_deaths a numpy array
+    #base_new_deaths = np.array(base_sim.results.rvf.new_deaths)
+    vacc_new_deaths = np.array(vacc_sim.results.rvf.new_deaths)
+    # Find the index when new_deaths becomes 1 for the first time
+    #base_index_death = np.where(base_new_deaths == 1)[0][0]
+    vacc_index_death = np.where(vacc_new_deaths == 1)[0][0]
+
+    # Make symptomatic cases a numpy array
+    #base_signs = np.array((base_sim.results.rvf.n_infected)*0.07)
+    vacc_signs = np.array((vacc_sim.results.rvf.n_infected)*0.07)
+    # Find the index when signs becomes 1 for the first time
+    #base_index_signs = np.where(base_signs >= 1)[0][0]
+    vacc_index_signs = np.where(vacc_signs >= 1)[0][0]
     
     # Make plots
     pl.figure()
-    pl.plot(sim.yearvec, sim.results.rvf.n_infected, label = "Total Infected")
-    pl.plot(sim.yearvec, (sim.results.rvf.n_infected * 0.07), label = "Symptomatic", color = "black")
-    pl.plot(sim.yearvec, sim.results.rvf.new_deaths, label = "New Deaths", color = "red")
-    pl.plot(sim.yearvec, sim.results.rvf.cum_deaths, label = "Cumulative Deaths", color = "green")
-    pl.plot(sim.yearvec, sim.results.rvf.new_infections, label = "New Infections", color = "orange")
-    pl.axvline(np.where(sim.results.rvf.new_deaths == 1)[0][0], color = "red")
-    pl.title('Number infected')
+    #pl.plot(base_sim.yearvec, base_sim.results.rvf.n_infected, color = "black", label = "Baseline")
+    pl.plot(vacc_sim.yearvec, vacc_sim.results.rvf.n_infected, color = "red", label = "Vaccinated")
+    #pl.plot(sim.yearvec, signs, label = "Symptomatic Cases", color = "black")
+    #pl.plot(sim.yearvec, sim.results.rvf.new_deaths, label = "New Deaths", color = "red")
+    #pl.plot(sim.yearvec, sim.results.rvf.cum_deaths, label = "Cumulative Deaths", color = "green")
+    #pl.plot(sim.yearvec, sim.results.rvf.new_infections, label = "New Infections", color = "orange")
+    #pl.axvline(base_index_signs, color = "black", linestyle='--')
+    pl.axvline(vacc_index_signs, color = "red", linestyle='--')
+    #pl.axvline(base_index_death, color = "black")
+    pl.axvline(vacc_index_death, color = "red")
+    pl.title('RVF Number of Infected', fontsize = 20)
+    pl.xlabel('Time in days', fontsize=12)  # X-axis title
+    pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
     pl.legend()
     pl.show()
 
+
+    
