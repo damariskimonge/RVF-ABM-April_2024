@@ -2,13 +2,13 @@
 Define rvf model.
 """
 
-import numpy as np
+import numpy as np 
 import pylab as pl
 import sciris as sc
 import starsim as ss
 
 
-class RVF(ss.SIS):
+class RVF(ss.SIS): # RVF class inherits from ss.SIS
 
     def __init__(self, pars=None, par_dists=None, *args, **kwargs):
         """ Initialize with parameters """
@@ -38,19 +38,19 @@ class RVF(ss.SIS):
         super().__init__(pars=pars, par_dists=par_dists, *args, **kwargs) #?? what's the idea of this line
 
         # SIR are added automatically, here we add Exposed
-        self.add_states(
-            ss.State('exposed', bool, False),
-            ss.State('recovered', float, np.nan),
-            ss.State('immunity', float, 0.0),
-            ss.State('ti_exposed', float, np.nan),
-            ss.State('ti_recovered', float, np.nan),
-            ss.State('ti_dead', float, np.nan),
+        self.add_states( 
+            ss.State('exposed', bool, False), # Creates state exposed with initial false; options are T or F
+            ss.State('recovered', float, np.nan), # Creates state recovered; initial value is missing
+            ss.State('immunity', float, 0.0), # Creates state immunity; inital value is 0.0, holds a number ie level of immunity
+            ss.State('ti_exposed', float, np.nan), # Creates time exposed; initial is missing, holds a number
+            ss.State('ti_recovered', float, np.nan), # Creates time recovered; initial value is missing, holds a number
+            ss.State('ti_dead', float, np.nan), # Creates time dead; initial is missing; holds a number
         )
 
         return
 
     def initialize(self, sim):
-        super().initialize(sim)
+        super().initialize(sim) # adding initial relative susceptibility to already initialised object
         self.rel_sus[sim.people.district==0] = self.pars.rel_sus_0
         self.rel_sus[sim.people.district==1] = self.pars.rel_sus_1
 
@@ -58,42 +58,42 @@ class RVF(ss.SIS):
         """
         Initialize results
         """
-        super().init_results(sim)
-        self.results += [
+        super().init_results(sim) # Calls the results of the superclass
+        self.results += [ # Here we are adding new results
             ss.Result(self.name, 'new_deaths', sim.npts, dtype=int, scale=True),
             ss.Result(self.name, 'cum_deaths', sim.npts, dtype=int, scale=True),
         ]
         return
 
     @property
-    def infectious(self):
+    def infectious(self): # Here infectious are both the infected and exposed
         return self.infected | self.exposed
 
     def update_pre(self, sim):
         # Progress exposed -> infected
-        infected = ss.true(self.exposed & (self.ti_infected <= sim.ti))
-        self.exposed[infected] = False
-        self.infected[infected] = True
+        infected = ss.true(self.exposed & (self.ti_infected <= sim.ti)) # Become infected if exposed and the time infected is <= current time
+        self.exposed[infected] = False # Stop being exposed
+        self.infected[infected] = True # Start being infected
 
         # Progress infected -> recovered
-        recovered = ss.true(self.infected & (self.ti_recovered <= sim.ti))
-        self.infected[recovered] = False
-        self.susceptible[recovered] = True
-        self.update_immunity(sim)
+        recovered = ss.true(self.infected & (self.ti_recovered <= sim.ti)) # Become recovered if infected and time recovered is <= current time
+        self.infected[recovered] = False # stop being infected
+        self.susceptible[recovered] = True # start being susceptible again
+        self.update_immunity(sim) # gain immunity
         #return
 
         # Trigger deaths
-        deaths = ss.true(self.ti_dead <= sim.year)
-        self.results.new_deaths[sim.ti] = len(deaths)
+        deaths = ss.true(self.ti_dead <= sim.year) # dead if time dead is <= year 
+        self.results.new_deaths[sim.ti] = len(deaths) # store update new_death result
         if len(deaths):
-            sim.people.request_death(deaths)
+            sim.people.request_death(deaths) #The simulation should process the deaths if they exist.
         return
 
     def update_immunity(self, sim):
         uids_0 = ss.true((self.immunity > 0) & (sim.people.district==0))
         uids_1 = ss.true((self.immunity > 0) & (sim.people.district==1))
-        self.immunity[uids_0] = (self.immunity[uids_0])*(1 - self.pars.waning*sim.dt)
-        self.rel_sus[uids_0] = np.maximum(0, self.pars.rel_sus_0 - self.immunity[uids_0])
+        self.immunity[uids_0] = (self.immunity[uids_0])*(1 - self.pars.waning*sim.dt) # update immunity
+        self.rel_sus[uids_0] = np.maximum(0, self.pars.rel_sus_0 - self.immunity[uids_0]) # update susceptibility
         self.immunity[uids_1] = (self.immunity[uids_1])*(1 - self.pars.waning*sim.dt)
         self.rel_sus[uids_1] = np.maximum(0, self.pars.rel_sus_1 - self.immunity[uids_1])
         return
@@ -103,33 +103,33 @@ class RVF(ss.SIS):
         # Do not call set_prognosis on parent
         # super().set_prognoses(sim, uids, source_uids)
 
-        self.susceptible[uids] = False
+        self.susceptible[uids] = False # Move from susceptible to exposed
         self.exposed[uids] = True
-        self.ti_exposed[uids] = sim.ti
+        self.ti_exposed[uids] = sim.ti # store this time
 
-        p = self.pars
+        p = self.pars 
 
         # Determine when exposed become infected
         self.ti_infected[uids] = sim.ti + p.dur_exp.rvs(uids) / sim.dt
-        self.immunity[uids] += self.pars.imm_boost
+        self.immunity[uids] += self.pars.imm_boost # Boosting the immunity
 
         # Sample duration of infection, being careful to only sample from the
         # distribution once per timestep.
         dur_inf = p.dur_inf.rvs(uids)
 
         # Determine who dies and who recovers and when
-        will_die = p.p_death.rvs(uids)
+        will_die = p.p_death.rvs(uids) 
         dead_uids = uids[will_die]
         rec_uids = uids[~will_die]
-        self.ti_dead[dead_uids] = self.ti_infected[dead_uids] + dur_inf[will_die] / sim.dt
-        self.ti_recovered[rec_uids] = self.ti_infected[rec_uids] + dur_inf[~will_die] / sim.dt
+        self.ti_dead[dead_uids] = self.ti_infected[dead_uids] + dur_inf[will_die] / sim.dt # set time of death
+        self.ti_recovered[rec_uids] = self.ti_infected[rec_uids] + dur_inf[~will_die] / sim.dt # set time of recoverey
 
         return
 
     def update_death(self, sim, uids):
         # Reset infected/recovered flags for dead agents
         for state in ['susceptible', 'exposed', 'infected', 'recovered']:
-            self.statesdict[state][uids] = False
+            self.statesdict[state][uids] = False # Sets all states to False because now dead
         return
     
     def update_results(self, sim):
@@ -149,7 +149,7 @@ class Cattle(ss.People):
         )
         return
 
-    def update_post(self, sim):
+    def update_post(self, sim): #called after each simulation step to update the state of the agents
         super().update_post(sim)
         district0_uids = ss.true(self.district==0)
         district1_uids = ss.true(self.district==1)
@@ -159,7 +159,7 @@ class Cattle(ss.People):
         self.district[will_move_10] = 0
 
 
-class vaccination(ss.Intervention):  # Create a new, generic treatment intervention
+class vaccination(ss.Intervention):  
 
     def __init__(self, prob=0.12, efficacy=0.623):
         super().__init__() # Initialize the intervention
@@ -189,48 +189,50 @@ if __name__ == '__main__':
     # The disease
     rvf = RVF()
 
+    # The intervention
+    vaccination = vaccination()
+
     # Adding the parameters to the model
     pars = sc.objdict(
         start = 0,
-        end = 100,  # Simulate for 100 days to see when the number of infected cows exceeds some threshold
+        end = 365,  # Simulate for 365 days (1 year) for seasonality
         dt = 1,
         birth_rate = 32.6, #National Animal Census of 2021
         death_rate = 30, # National Animal Census of 2021
         networks = "random",    
     )
 
-    #base_sim = ss.Sim(pars = pars, people = cattle, diseases = rvf)
-    vacc_sim = ss.Sim(pars=pars, people=cattle, diseases=rvf, interventions=vaccination)
+    base_sim = ss.Sim(pars = pars, people = cattle, diseases = rvf)
+    #vacc_sim = ss.Sim(pars=pars, people=cattle, diseases=RVF(), interventions=vaccination())
     
-    #base_sim.run()
-    vacc_sim.run()
+    base_sim.run()
+    #vacc_sim.run()
 
     # Make sim.results.rvf.new_deaths a numpy array
-    #base_new_deaths = np.array(base_sim.results.rvf.new_deaths)
-    vacc_new_deaths = np.array(vacc_sim.results.rvf.new_deaths)
+    base_new_deaths = np.array(base_sim.results.rvf.new_deaths)
+    #vacc_new_deaths = np.array(vacc_sim.results.rvf.new_deaths)
+    
     # Find the index when new_deaths becomes 1 for the first time
-    #base_index_death = np.where(base_new_deaths == 1)[0][0]
-    vacc_index_death = np.where(vacc_new_deaths == 1)[0][0]
+    base_index_death = np.where(base_new_deaths == 1)[0][0]
+    #vacc_index_death = np.where(vacc_new_deaths == 1)[0][0]
 
     # Make symptomatic cases a numpy array
-    #base_signs = np.array((base_sim.results.rvf.n_infected)*0.07)
-    vacc_signs = np.array((vacc_sim.results.rvf.n_infected)*0.07)
+    base_signs = np.array((base_sim.results.rvf.n_infected)*0.07)
+    #vacc_signs = np.array((vacc_sim.results.rvf.n_infected)*0.07)
+    
     # Find the index when signs becomes 1 for the first time
-    #base_index_signs = np.where(base_signs >= 1)[0][0]
-    vacc_index_signs = np.where(vacc_signs >= 1)[0][0]
+    base_index_signs = np.where(base_signs >= 1)[0][0]
+    #vacc_index_signs = np.where(vacc_signs >= 1)[0][0]
     
     # Make plots
     pl.figure()
-    #pl.plot(base_sim.yearvec, base_sim.results.rvf.n_infected, color = "black", label = "Baseline")
-    pl.plot(vacc_sim.yearvec, vacc_sim.results.rvf.n_infected, color = "red", label = "Vaccinated")
-    #pl.plot(sim.yearvec, signs, label = "Symptomatic Cases", color = "black")
-    #pl.plot(sim.yearvec, sim.results.rvf.new_deaths, label = "New Deaths", color = "red")
-    #pl.plot(sim.yearvec, sim.results.rvf.cum_deaths, label = "Cumulative Deaths", color = "green")
-    #pl.plot(sim.yearvec, sim.results.rvf.new_infections, label = "New Infections", color = "orange")
-    #pl.axvline(base_index_signs, color = "black", linestyle='--')
-    pl.axvline(vacc_index_signs, color = "red", linestyle='--')
-    #pl.axvline(base_index_death, color = "black")
-    pl.axvline(vacc_index_death, color = "red")
+    pl.plot(base_sim.yearvec, base_sim.results.rvf.n_infected, color = "black", label = "Baseline")
+    pl.plot(base_sim.yearvec, base_signs, label = "Symptomatic Cases", color = "black")
+    pl.plot(base_sim.yearvec, base_sim.results.rvf.new_deaths, label = "New Deaths", color = "red")
+    pl.plot(base_sim.yearvec, base_sim.results.rvf.cum_deaths, label = "Cumulative Deaths", color = "green")
+    pl.plot(base_sim.yearvec, base_sim.results.rvf.new_infections, label = "New Infections", color = "orange")
+    pl.axvline(base_index_signs, color = "black", linestyle='--')
+    pl.axvline(base_index_death, color = "black")
     pl.title('RVF Number of Infected', fontsize = 20)
     pl.xlabel('Time in days', fontsize=12)  # X-axis title
     pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
@@ -238,4 +240,3 @@ if __name__ == '__main__':
     pl.show()
 
 
-    
