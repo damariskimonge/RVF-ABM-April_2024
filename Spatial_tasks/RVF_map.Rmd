@@ -1,0 +1,73 @@
+---
+title: "RVF_Map"
+author: "Vee"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Required packages
+
+Loading the necessary libraries: sf, ggplot2, and readr, used for handling spatial data, plotting, and reading data, respectively.
+
+```{r packages}
+#install.packages("sf")
+#install.packages("ggplot2")
+#install.packages("readr")
+
+library(sf)
+library(ggplot2)
+library(readr)
+```
+
+## Shapefile and csv file
+
+We use the st_read() from the sf package function to load the shapefile "uga_admbnda_adm3_ubos_20200824.shp" into the uganda_shape object. Then, we reads a CSV file named "Cattle_2021.csv" into the data object using read_csv() from the readr package.
+
+```{r files}
+
+uganda_shape <- st_read("uga_admbnda_adm3_ubos_20200824.shp")
+
+data <- read_csv("Cattle_2021.csv")
+
+```
+
+## Merge shapefile and CSV data
+
+We merges the uganda_shape and data files based on a common attribute: "ADM3_EN" column from uganda_shape with the "district" column from data.
+
+The resulting merged dataset is stored in uganda_shape_data.
+
+```{r merge}
+
+uganda_shape_data <- merge(uganda_shape, data, by.x = "ADM3_EN", by.y = "district")
+
+```
+
+## Plot the map_uganda
+
+The map of Uganda with district administrative boundaries is generated, and the fill color representing the crude incidence rate of RVF. The color gradient indicate areas of higher and lower incidence rates.
+
+```{r plot}
+library(ggplot2)
+library(RColorBrewer)
+
+ggplot(data = uganda_shape_data, aes(fill = crude_incidence_rate)) +
+  geom_sf() +
+   scale_fill_gradientn(colours =  brewer.pal(4, "YlOrRd"),
+                       name="crude_incidence_rate",
+                       na.value = "grey100") +
+  geom_sf(data = uganda_shape, color = "black", fill = NA) +
+  #geom_sf_text(data = uganda_shape_data, aes(label = crude_incidence_rate), 
+               #size = 2, color = "black", position = position_nudge(y = 1)) +
+  theme_minimal() +
+  theme(panel.grid = element_blank(),  # Remove gridlines
+        axis.text = element_blank(),        # Hide axis text
+        axis.title = element_blank(),       # Hide axis titles
+        plot.background = element_blank(),  # Add plot frame
+        panel.border = element_blank())       # Hide panel borders
+        
+```
