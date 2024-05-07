@@ -6,6 +6,7 @@ import numpy as np
 import pylab as pl
 import sciris as sc
 import starsim as ss
+from data_processing import p_kampala, prob_kampala_kiruhura, prob_kiruhura_kampala
 
 
 class RVF(ss.SIS): # RVF class inherits from ss.SIS
@@ -144,8 +145,8 @@ class Cattle(ss.People):
     def __init__(self, n_agents, extra_states=None):
         super().__init__(n_agents, extra_states=extra_states)
         self.pars = sc.objdict(
-            p_move_01 = 0.0006, # Could update this later to vary over time
-            p_move_10 = 0.000000001
+            p_move_01 = prob_kiruhura_kampala, # Could update this later to vary over time
+            p_move_10 = prob_kampala_kiruhura
         )
         return
 
@@ -185,7 +186,7 @@ class vaccination(ss.Intervention):
 if __name__ == '__main__':
 
     # Make the cattle with the extra state for district
-    district = ss.FloatArr("district", None, 0.5)
+    district = ss.FloatArr("district", None, p_kampala)
     cattle = Cattle(n_agents=1000, extra_states=district)
 
     # The disease
