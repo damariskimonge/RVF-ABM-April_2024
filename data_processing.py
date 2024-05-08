@@ -4,6 +4,7 @@
 import os
 import geopandas as gpd
 import rasterio
+import rasterio.mask  
 from rasterio.windows import from_bounds
 import pandas as pd
 import numpy as np
@@ -22,6 +23,7 @@ prev_data['date_sample'] = pd.to_datetime(prev_data['date_sample'], format='mixe
 prev_data = prev_data[prev_data['date_sample'].dt.year == 2021]
 ## Find prevalence
 prev_data = prev_data[(prev_data['district'].isin(['kampala', 'kiruhura']))]
+### TO DO: Vera suggests using relative risk.
 
 
 # Population data
@@ -29,7 +31,7 @@ pop_data = pd.read_excel("data/Cattle_2021.xlsx")
 ### Make district lower case
 pop_data['district'] = pop_data['district'].str.lower()
 ### Remove extra white spaces
-pop_data['district'] = pop_data['district'].str.strip().str.replace(r'\s+', ' ')
+pop_data['district'] = pop_data['district'].str.strip().str.replace(r'/s+', ' ')
 
 
 ## Ratio of cattle in kiruhura vs kampala
@@ -42,9 +44,9 @@ p_kampala = kampala_number / (kampala_number + kiruhura_number)
 movement_data = pd.read_excel("data/livestock_all.xlsx")
 ### Make district lower case and remove extra white spaces
 movement_data['origin'] = movement_data['origin'].str.lower()
-movement_data['origin'] = movement_data['origin'].str.strip().str.replace(r'\s+', ' ')
+movement_data['origin'] = movement_data['origin'].str.strip().str.replace(r'/s+', ' ')
 movement_data['destination'] = movement_data['destination'].str.lower()
-movement_data['destination'] = movement_data['destination'].str.strip().str.replace(r'\s+', ' ')
+movement_data['destination'] = movement_data['destination'].str.strip().str.replace(r'/s+', ' ')
 ### Filter for bovine
 movement_data = movement_data[movement_data['species'] == 'BOVINE']
 ### Filter date_issue for 2021: Won't do because there is no movemen btwn Kampala and kiruhura in 2021
@@ -58,7 +60,30 @@ quantity_kiruhura_kampala = movement_data.loc[(movement_data['origin'] == 'kiruh
 prob_kampala_kiruhura = quantity_kampala_kiruhura / kampala_number
 prob_kiruhura_kampala = quantity_kiruhura_kampala / kiruhura_number
 
+# Load the district data
+districts = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
+### Make the district names lower case
+districts['ADM2_EN'] = districts['ADM2_EN'].str.lower()
+
 # Temperature data
-# Load district boundaries
-district_boundaries = gpd.read_file("data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm3_ubos_20200824.shp")
+### Function to calculate average temperature for a district
+def calculate_average_temperature(district, temp_data, src):
+    ### Mask the temperature data array with the district geometry
+    out_image, out_transform = rasterio.mask.mask(src, [district], nodata=np.nan, crop=True)
+    ### Calculate and return the average temperature
+    return np.nanmean(out_image)
+### Open the temperature data file
+with rasterio.open('data/temp_uganda2021.tiff') as src:
+    ### Ensure the source data is float32
+    kwargs = src.meta
+    kwargs.update(
+        dtype=rasterio.float32,
+        count=1,
+        compress='lzw')
+    temp_data = src.read(1).astype(rasterio.float32)
+    ### Convert the Coordinate Reference System (CRS)
+    districts = districts.to_crs(src.crs)
+    ### Calculate average temperature for each district
+    districts['avg_temp'] = districts.geometry.apply(calculate_average_temperature, args=(temp_data, src))
+
 
