@@ -1,3 +1,11 @@
-__pycache__/
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+.DS_Store
+/__pycache__
+rvf_workspace.code-workspace
+RVF-ABM-April_2024.Rproj
 rvf_angela.py
+.DS_Store
 *.zip

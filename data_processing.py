@@ -10,7 +10,17 @@ import pandas as pd
 import numpy as np
 
 ### set working directory
-os.chdir("C:/Users/angel/OneDrive/Documents/GitHub/RVF-ABM-April_2024")
+os.chdir("C:/Users/angel/OneDrive/Documents/cema/Github/RVF-ABM-April_2024")
+
+## Creating a date object for plotting:
+from datetime import datetime, timedelta
+# Define the start and end dates for 2021
+start_date = datetime(2021, 1, 1)
+end_date = datetime(2021, 12, 31)
+# Calculate the number of days between the start and end dates
+num_days = (end_date - start_date).days
+# Create a list of daily dates
+date_list = [start_date + timedelta(days=x) for x in range(num_days + 1)]
 
 # Prevalence data
 prev_data = pd.read_excel("data/naddec_04022024.xls")
@@ -32,13 +42,17 @@ pop_data = pd.read_excel("data/Cattle_2021.xlsx")
 pop_data['district'] = pop_data['district'].str.lower()
 ### Remove extra white spaces
 pop_data['district'] = pop_data['district'].str.strip().str.replace(r'/s+', ' ')
-
-
+## Total population
+total_pop = pop_data['number'].sum()
 ## Ratio of cattle in kiruhura vs kampala
 kampala_number = pop_data.loc[pop_data['district'] == 'kampala', 'number'].iloc[0]
 kiruhura_number = pop_data.loc[pop_data['district'] == 'kiruhura', 'number'].iloc[0]
+### Population of kampala and kiruhura
+pop_kam_kir = kampala_number + kiruhura_number
 ## Calculate the probability of the cow being in kampala
-p_kampala = kampala_number / (kampala_number + kiruhura_number)
+p_kampala = kampala_number / pop_kam_kir
+p_kiruhura = kiruhura_number / pop_kam_kir
+
 
 # Movement data
 movement_data = pd.read_excel("data/livestock_all.xlsx")
@@ -60,30 +74,26 @@ quantity_kiruhura_kampala = movement_data.loc[(movement_data['origin'] == 'kiruh
 prob_kampala_kiruhura = quantity_kampala_kiruhura / kampala_number
 prob_kiruhura_kampala = quantity_kiruhura_kampala / kiruhura_number
 
-# Load the district data
+# Load the district data 
 districts = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
 ### Make the district names lower case
 districts['ADM2_EN'] = districts['ADM2_EN'].str.lower()
 
-# Temperature data
-### Function to calculate average temperature for a district
-def calculate_average_temperature(district, temp_data, src):
-    ### Mask the temperature data array with the district geometry
-    out_image, out_transform = rasterio.mask.mask(src, [district], nodata=np.nan, crop=True)
-    ### Calculate and return the average temperature
-    return np.nanmean(out_image)
-### Open the temperature data file
-with rasterio.open('data/temp_uganda2021.tiff') as src:
-    ### Ensure the source data is float32
-    kwargs = src.meta
-    kwargs.update(
-        dtype=rasterio.float32,
-        count=1,
-        compress='lzw')
-    temp_data = src.read(1).astype(rasterio.float32)
-    ### Convert the Coordinate Reference System (CRS)
-    districts = districts.to_crs(src.crs)
-    ### Calculate average temperature for each district
-    districts['avg_temp'] = districts.geometry.apply(calculate_average_temperature, args=(temp_data, src))
+# Load the environment data
+env_data = pd.read_excel("data/env_data.xlsx")
+env_data['district'] = env_data['district'].str.lower()
 
+kampala_veg = env_data.loc[env_data['district'] == "kampala", 'vegetation_index'].iloc[0]
+kampala_veg_arr = np.random.normal(loc=kampala_veg, size=365)
+kampala_temp = env_data.loc[env_data['district'] == 'kampala', 'temperature'].iloc[0]
+kampala_temp_arr = np.random.normal(loc=kampala_temp, size=365)
+kampala_rain = env_data.loc[env_data['district'] == 'kampala', 'precipitation'].iloc[0]
+kampala_rain_arr = np.random.normal(loc=kampala_rain, size=365)
+
+kiruhura_veg = env_data.loc[env_data['district'] == "kiruhura", 'vegetation_index'].iloc[0]
+kiruhura_veg_arr = np.random.normal(loc=kiruhura_veg, size=365)
+kiruhura_temp = env_data.loc[env_data['district'] == 'kiruhura', 'temperature'].iloc[0]
+kiruhura_temp_arr = np.random.normal(loc=kiruhura_temp , size=365)
+kiruhura_rain = env_data.loc[env_data['district'] == 'kiruhura', 'precipitation'].iloc[0]
+kiruhura_rain_arr = np.random.normal(loc=kiruhura_rain, size=365)
 
