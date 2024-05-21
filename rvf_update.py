@@ -9,14 +9,17 @@ import numpy as np
 import pylab as pl
 import sciris as sc
 import starsim as ss
-from data_processing import p_kampala, p_kiruhura, prob_kampala_kiruhura, prob_kiruhura_kampala 
-from data_processing import total_pop, pop_kam_kir 
-from data_processing import kampala_rain_arr, kampala_temp_arr, kampala_veg_arr, kiruhura_rain_arr, kiruhura_temp_arr, kiruhura_veg_arr
+from data_processing import unique_districts, district_probabilities #Assigning cattle to the various districts
+from data_processing import total_pop # Getting the total population of cattle in Uganda
+from data_processing import movement_prob_array # Getting the probability of movement of cattle
+from data_processing import env_arrays
 from data_processing import date_list
 
+# The disease class
 class RVF(ss.SIS): # RVF class inherits from ss.SIS
 
-    def __init__(self, kampala_rain_arr, kampala_veg_arr, kampala_temp_arr, kiruhura_rain_arr, kiruhura_veg_arr, kiruhura_temp_arr, pars=None, par_dists=None, *args, **kwargs):
+    def __init__(self, env_arrays, pars=None, par_dists=None, *args, **kwargs):
+        self.env_arrays = env_arrays
         """ Initialize with parameters """
         pars = ss.dictmergeleft(pars,
             # Natural history parameters, duration specified in days
@@ -25,12 +28,10 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
             p_death = 0.1,     #  In adult cattle: Rift Valley Fever Factsheet: Pennsylvania Dept of Health (2013)
 
             # Initial conditions and beta
-            init_prev = 0.001, # Consider changing.
+            init_prev = 0.001, # Consider changing so that it becomes dependent on district.
             beta = 0.04,     # From the Review of Mosquitoes associated with RFV virus in Madagascar paper (Tantely et al 2015)
             waning = 0.05,   # Assumption
             imm_boost = 1.0, # Assumption 
-            rel_sus_0 = 1, # Placeholder: updated in model
-            rel_sus_1 = 1, # Placeholder: updated in model
         )
 
         par_dists = ss.dictmergeleft(par_dists, # Distributions
@@ -39,13 +40,6 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
             init_prev = ss.bernoulli,
             p_death   = ss.bernoulli,
         )
-        
-        self.kampala_rain_arr = kampala_rain_arr
-        self.kampala_veg_arr = kampala_veg_arr
-        self.kampala_temp_arr = kampala_temp_arr
-        self.kiruhura_rain_arr = kiruhura_rain_arr
-        self.kiruhura_veg_arr = kiruhura_veg_arr
-        self.kiruhura_temp_arr = kiruhura_temp_arr
 
         super().__init__(pars=pars, par_dists=par_dists, *args, **kwargs) # this intialises the sim
 
@@ -67,17 +61,22 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         num_days = 365
         num_cattle = len(sim.people)  # Assuming sim.people is an array-like structure with cattle data
 
-        # Create the relative susceptibility arrays for each district
-        rel_sus_kampala = (self.kampala_rain_arr/100) * (self.kampala_veg_arr/1000) * (self.kampala_temp_arr/10)
-        rel_sus_kiruhura = (self.kiruhura_rain_arr/100) * (self.kiruhura_veg_arr/1000) * (self.kiruhura_temp_arr/10)
+        # Initialize relative susceptibility array
+        rel_sus = np.zeros(num_cattle)
 
-        # Assign susceptibility based on the district of each cow
+        # Calculate relative susceptibility based on the district of each cow
         for i in range(num_cattle):
-            if sim.people.district[i] == 0:  # Kampala
-                self.rel_sus[i] = rel_sus_kampala[i % num_days]
-            elif sim.people.district[i] == 1:  # Kiruhura
-                self.rel_sus[i] = rel_sus_kiruhura[i % num_days]
+            district = sim.people.district[i]
+            if district in self.env_arrays:
+                rain_arr = self.env_arrays[district]['rain_arr']
+                veg_arr = self.env_arrays[district]['veg_arr']
+                temp_arr = self.env_arrays[district]['temp_arr']
+                rel_sus[i] = (rain_arr[i % num_days] / 100) * (veg_arr[i % num_days] / 1000) * (temp_arr[i % num_days] / 10)
+                # Make relative susceptibility a function of the first day of the first district.
                 
+        # Assign the calculated relative susceptibility to the state
+        self.rel_sus[:] = rel_sus
+        
         # Register the state with starsim
         sim.people.register_state('rel_sus', self.rel_sus)        
                 
@@ -97,6 +96,8 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         return self.infected #| self.exposed
 
     def update_pre(self, sim):
+        # I think I will also put relative susceptibility here so that updated as a loop.
+
         # Progress exposed -> infected
         #infected = (self.exposed & (self.ti_infected <= sim.ti)).uids # Become infected if exposed and the time infected is <= current time
         infected = (self.ti_infected <= sim.ti).uids
@@ -110,6 +111,8 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         self.update_immunity(sim) # gain immunity
         #return
 
+        # also define the immunity within here perhaps.
+
         # Trigger deaths
         deaths = (self.ti_dead <= sim.ti).uids # dead if time dead is <= current time 
         self.results.new_deaths[sim.ti] = len(deaths) # store update new_death result
@@ -118,12 +121,9 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         return
 
     def update_immunity(self, sim):
-        uids_0 = ((self.immunity > 0) & (sim.people.district==0)).uids
-        uids_1 = ((self.immunity > 0) & (sim.people.district==1)).uids
-        self.immunity[uids_0] = (self.immunity[uids_0])*(1 - self.pars.waning) # update immunity
-        self.rel_sus[uids_0] = np.maximum(0, self.pars.rel_sus_0 - self.immunity[uids_0]) # update susceptibility
-        self.immunity[uids_1] = (self.immunity[uids_1])*(1 - self.pars.waning)
-        self.rel_sus[uids_1] = np.maximum(0, self.pars.rel_sus_1 - self.immunity[uids_1])
+        uids = (self.immunity > 0).uids
+        self.immunity[uids] = (self.immunity[uids]) * (1 - self.pars.waning)  # Update immunity
+        self.rel_sus[uids] = np.maximum(0, self.rel_sus[uids] - self.immunity[uids])  # Update susceptibility
         return
 
     def set_prognoses(self, sim, uids, source_uids=None):
@@ -169,62 +169,110 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         res = self.results
         ti = sim.ti
         res.cum_deaths[ti] = np.sum(res['new_deaths'][:ti+1])
+
+        # ensure I have: SIRD here.
+        # also perhaps prevalence
         return
 
+# The disease
+rvf = RVF(env_arrays=env_arrays)
 
+# The People Class
 class Cattle(ss.People):
-    def __init__(self, n_agents, extra_states=None):
+    def __init__(self, n_agents, movement_prob_array, extra_states=None):
         super().__init__(n_agents, extra_states=extra_states)
-        self.pars = sc.objdict(
-            p_move_01 = prob_kampala_kiruhura, # 
-            p_move_10 = prob_kiruhura_kampala
-        )
+        self.movement_prob_array = movement_prob_array
         return
 
-    def update_post(self, sim): #called after each simulation step to update the state of the agents
+    def update_post(self, sim):
         super().update_post(sim)
-        district0_uids = (self.district==0).uids # get uids of those in each district
-        district1_uids = (self.district==1).uids
-        will_move_01 = self.pars.p_move_01 > np.random.rand(len(district0_uids))  # get who will move
-        will_move_10 = self.pars.p_move_10 > np.random.rand(len(district1_uids))
-        moving_01_uids = district0_uids[will_move_01] # get the uids of those who will move
-        moving_10_uids = district1_uids[will_move_10]
-        self.district[moving_01_uids] = 1 # actual movement
-        self.district[moving_10_uids] = 0
         
-class cattle_network(ss.DynamicNetwork): # Inherits from DynamicNetwork
+        n_districts = len(self.movement_prob_array)
+        #print(f"Number of districts: {n_districts}")
+        districts = self.states['district'].values.astype(int)  # Ensure districts are treated as integers
+        #print(f"districts array size: {len(districts)}")
+
+        # Loop over each cow to update its district based on movement probabilities
+        for cow_id in range(len(districts)):
+            current_district = districts[cow_id]
+            move_prob = self.movement_prob_array[current_district]  # Get the movement probabilities for the current district
+
+            # Determine the new district based on the movement probabilities
+            new_district = np.random.choice(n_districts, p=move_prob)
+
+            # Debugging: Print statements to understand the issue
+            #print(f"Cow ID: {cow_id}")
+            #print(f"Current District: {current_district}")
+            #print(f"Movement Probabilities: {move_prob}")
+            #print(f"New District: {new_district}")
+
+            # Update the cow's district
+            self.states['district'].values[cow_id] = new_district
+        
+        return
+
+
+# Initialize the Cattle class with the number of agents, districts, and movement probabilities
+n_agents = 1000
+unique_districts = len(district_probabilities)
+district_values = np.random.choice(unique_districts, size=n_agents, p=district_probabilities)  # Assign initial districts based on population probabilities
+district = ss.FloatArr("district", None, district_values)  # Create the district state for cattle using FloatArr
+
+cattle = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states=district)
+
+# The Network Class        
+class Cattlenetwork(ss.DynamicNetwork): # Inherits from DynamicNetwork
     def __init__(self, pars = None, key_dict = None, **kwargs): # 
         super().__init__(pars=pars, key_dict = key_dict, **kwargs)
         
     def initialize(self, sim): # initialise 
         super().initialize(sim)
         self.update_contacts_within_district(sim)
+
+    def add_contact(self, p1, p2, sim, beta=1.0, dur=1.0):
+        """ Add a contact between two agents. """
+        new_contact = {
+            'p1': np.array([p1], dtype=np.int32),
+            'p2': np.array([p2], dtype=np.int32),
+            'beta': np.array([beta], dtype=np.float32),
+            'dur': np.array([dur], dtype=np.float32),
+        }
+        self.append(new_contact)
         
     def update_contacts_within_district(self, sim): # set contacts
-        num_cattle = len(sim.people)
-        district_contacts = {0: [], 1: []} # Separate contacts by district
+        """ Update contacts within the same district."""
+        districts = sim.people.states['district'].values # Get district values
         
-        # Generate contacts
-        for i in range(num_cattle):
-            district = sim.people.district[i]
-            potential_contacts = np.where(sim.people.district == 0)[0]
-            potential_contacts = potential_contacts[potential_contacts != i] # Remve self from potential contacts
+        # Initialize the district contacts dictionary
+        unique_districts = np.unique(districts)
+        district_contacts = {district: [] for district in unique_districts} # Separate contacts by district
+        
+        for i, district in enumerate(districts):
+            potential_contacts = np.where(districts == district)[0]  # Agents in the same district
+            if len(potential_contacts) > 4:
+                contacts = np.random.choice(potential_contacts, 4, replace=False)  # Randomly choose 4 contacts
+            else:
+                contacts = [contact for contact in potential_contacts if contact != i]  # All contacts except self
             
-            if len(potential_contacts) > 0:
-                contacts = np.random.choice(potential_contacts, 4, replace = False) # make number of contacts 4
-                for contact in contacts:
-                    district_contacts[district].append((i, contact))
-                    
+            for contact in contacts:
+                district_contacts[district].append((i, contact))  # Add to district contacts
+                            
         # Store contacts
         for district, pairs in district_contacts.items():
             for p1, p2 in pairs:
-                self.add_contact(sim.people, p1, p2)
+                self.add_contact(p1, p2, sim, beta = 1.0, dur = 1/365)
+
+        return
                 
-    def step(self, sim): # end existing pairs and updates contacts
+    def step(self, sim): # end existing pairs and update contacts
         self.end_pairs(sim.people)
-        self.update_contacts_within_district(sim.people)
-        
-class vaccination(ss.Intervention):  
+        self.update_contacts_within_district(sim)
+
+# The network
+cattle_network = Cattlenetwork()
+
+# The Intervention Class: Vaccination
+class Vaccination(ss.Intervention):  
 
     def __init__(self, prob=0.12, efficacy=0.623):
         super().__init__() # Initialize the intervention
@@ -244,42 +292,44 @@ class vaccination(ss.Intervention):
         # vaccinating cattle will reduce susceptibility
         rvf.rel_sus[vaccinated_ids] = 1-self.efficacy 
 
+# The intervention
+vaccination = Vaccination()
+
+# The Intervention Class: Quarantine
+class Quarantine(ss.Intervention):  
+
+    def __init__(self, prob=0.12, efficacy=0.623):
+        super().__init__() # Initialize the intervention
+        self.prob = prob # Store the probability of vaccination
+        self.efficacy = efficacy
+
+    def apply(self, sim):
+
+        # Define  who is eligible for vaccination
+        eligible_ids = sim.people.uid[rvf.susceptible]  # People are eligible for vacc if they are susceptible
+        n_eligible = len(eligible_ids) # Number of people who are eligible
+
+        # Define who receives  vaccination
+        is_vaccinated = np.random.rand(n_eligible) < self.prob  # Define which of the n_eligible people get treated by comparing np.random.rand() to self.p
+        vaccinated_ids = eligible_ids[is_vaccinated]  # Pull out the IDs for the people receiving the treatment
+
+        # vaccinating cattle will reduce susceptibility
+        rvf.rel_sus[vaccinated_ids] = 1-self.efficacy 
+
+# The intervention
+quarantine = Quarantine()
 
 # Adding the parameters to the model
 pars = sc.objdict(
   start = 0,
   end = 1,  # Simulate for 365 days (1 year) for seasonality
   dt = 1/365, # The default is a year so I'm making it a day
-  birth_rate = 32.6, #National Animal Census of 2021
-  death_rate = 30, # National Animal Census of 2021
-  total_pop = pop_kam_kir # This is so that the values are scaled to the actual population.
+  birth_rate = (32.6/365)*1e3, #National Animal Census of 2021
+  death_rate = (30/365)*1e3, # National Animal Census of 2021
+  total_pop = total_pop # This is so that the values are scaled to the actual population.
    )
 
-
-# Make the cattle with the extra state for district
-district = ss.FloatArr("district", None, p_kiruhura)
-cattle = Cattle(n_agents=1000, extra_states=district)
-
-# The disease
-rvf = RVF(
-  kampala_rain_arr=kampala_rain_arr,
-  kampala_veg_arr=kampala_veg_arr,
-  kampala_temp_arr=kampala_temp_arr,
-  kiruhura_rain_arr=kiruhura_rain_arr,
-  kiruhura_veg_arr=kiruhura_veg_arr,
-  kiruhura_temp_arr=kiruhura_temp_arr
-)
-
-# The network
-network = cattle_network()
-
-# The intervention
-#vaccination = vaccination()
-
-
-
-
-base_sim = ss.Sim(pars = pars, people = cattle, diseases = rvf, networks = network)
+base_sim = ss.Sim(pars = pars, people = cattle, diseases = rvf, networks = cattle_network)
 #vacc_sim = ss.Sim(pars=pars, people=cattle, diseases=RVF(), interventions=vaccination(), networks = network)
     
 base_sim.run()
@@ -302,7 +352,15 @@ base_sim.run()
 #base_index_signs = np.where(base_signs >= 1)[0][0]
 #vacc_index_signs = np.where(vacc_signs >= 1)[0][0]
     
-# Make plots
+# Make plots:
+# First is susceptible
+# Second is infected
+# 2b is symptomatic
+# Third is recovered
+# Fourth is dead
+# Others are first sign
+# Others are first death
+# Compare the three scenarios here
 def plot_n_infected():
     pl.figure()
     pl.plot(date_list, base_sim.results.rvf.n_infected[:len(date_list)], color="black", label="Number Infected") # The results are truncated to be only one year

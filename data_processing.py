@@ -3,9 +3,9 @@
 
 import os
 import geopandas as gpd
-import rasterio
-import rasterio.mask  
-from rasterio.windows import from_bounds
+#import rasterio
+#import rasterio.mask  
+#from rasterio.windows import from_bounds
 import pandas as pd
 import numpy as np
 
@@ -42,58 +42,88 @@ pop_data = pd.read_excel("data/Cattle_2021.xlsx")
 pop_data['district'] = pop_data['district'].str.lower()
 ### Remove extra white spaces
 pop_data['district'] = pop_data['district'].str.strip().str.replace(r'/s+', ' ')
+## Sort by district name: alphabetical order
+pop_data = pop_data.sort_values(by='district').reset_index(drop=True)
 ## Total population
 total_pop = pop_data['number'].sum()
-## Ratio of cattle in kiruhura vs kampala
-kampala_number = pop_data.loc[pop_data['district'] == 'kampala', 'number'].iloc[0]
-kiruhura_number = pop_data.loc[pop_data['district'] == 'kiruhura', 'number'].iloc[0]
-### Population of kampala and kiruhura
-pop_kam_kir = kampala_number + kiruhura_number
-## Calculate the probability of the cow being in kampala
-p_kampala = kampala_number / pop_kam_kir
-p_kiruhura = kiruhura_number / pop_kam_kir
+# Calculate the probability of each cow being assigned to each district
+pop_data['probability'] = pop_data['number'] / total_pop
+# Create the probability array
+districts = pop_data['district'].values
+district_probabilities = pop_data['probability'].values
 
 
 # Movement data
 movement_data = pd.read_excel("data/livestock_all.xlsx")
 ### Make district lower case and remove extra white spaces
-movement_data['origin'] = movement_data['origin'].str.lower()
-movement_data['origin'] = movement_data['origin'].str.strip().str.replace(r'/s+', ' ')
-movement_data['destination'] = movement_data['destination'].str.lower()
-movement_data['destination'] = movement_data['destination'].str.strip().str.replace(r'/s+', ' ')
+movement_data['origin'] = movement_data['origin'].str.lower().str.strip().str.replace(r'\s+', ' ', regex=True)
+movement_data['destination'] = movement_data['destination'].str.lower().str.strip().str.replace(r'\s+', ' ', regex=True)
 ### Filter for bovine
 movement_data = movement_data[movement_data['species'] == 'BOVINE']
-### Filter date_issue for 2021: Won't do because there is no movemen btwn Kampala and kiruhura in 2021
-movement_data['date_issue'] = pd.to_datetime(movement_data['date_issue'], format='mixed')
+### Filter date_issue for 2021.
+movement_data.loc[:, 'date_issue'] = pd.to_datetime(movement_data['date_issue'], format='mixed')
 movement_data = movement_data[movement_data['date_issue'].dt.year == 2021]
-## Get probability of movement
-### First find the total number of cattle that were moved.
-quantity_kampala_kiruhura = movement_data.loc[(movement_data['origin'] == 'kampala') & (movement_data['destination'] == 'kiruhura'), 'quantity'].sum()
-quantity_kiruhura_kampala = movement_data.loc[(movement_data['origin'] == 'kiruhura') & (movement_data['destination'] == 'kampala'), 'quantity'].sum()
-### Find probability by dividing total
-prob_kampala_kiruhura = quantity_kampala_kiruhura / kampala_number
-prob_kiruhura_kampala = quantity_kiruhura_kampala / kiruhura_number
+## Get probability of movement: create a probability matrix
+### Get unique districts
+unique_districts = sorted(pop_data['district'].unique())
+### Initialize the probability matrix
+movement_prob_matrix = pd.DataFrame(0, index=unique_districts, columns=unique_districts, dtype=float)
+### Calculate the total movements from each district
+total_movements = movement_data.groupby('origin')['quantity'].sum()
+### Calculate movement probabilities
+for _, row in movement_data.iterrows():
+    origin = row['origin']
+    destination = row['destination']
+    quantity = row['quantity']
+    if origin in unique_districts and destination in unique_districts:
+        movement_prob_matrix.loc[origin, destination] += quantity
+### Normalize the probabilities based on the total population in the origin district
+for origin in unique_districts:
+    if total_movements.get(origin, 0) > 0:
+        district_population = pop_data[pop_data['district'] == origin]['number'].values[0]
+        movement_prob_matrix.loc[origin] /= district_population
+### Replace NaNs with 0
+movement_prob_matrix.fillna(0, inplace=True)
+# Calculate the probability of staying in the same district
+for origin in unique_districts:
+    total_prob = movement_prob_matrix.loc[origin].sum()
+    if total_prob < 1:
+        stay_probability = 1 - total_prob
+        movement_prob_matrix.loc[origin, origin] += stay_probability
+# Handle districts with no movement at all
+for origin in unique_districts:
+    if total_movements.get(origin, 0) == 0:
+        movement_prob_matrix.loc[origin, origin] = 1
+# Ensure all probabilities sum to 1
+for origin in unique_districts:
+    row_sum = movement_prob_matrix.loc[origin].sum()
+    if row_sum > 0:
+        movement_prob_matrix.loc[origin] /= row_sum
+# Replace NaNs with 0 (if any)
+movement_prob_matrix.fillna(0, inplace=True)
+# Convert to numpy array for use in the simulation
+movement_prob_array = movement_prob_matrix.to_numpy()
+
+
 
 # Load the district data 
-districts = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
+district_data = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
 ### Make the district names lower case
-districts['ADM2_EN'] = districts['ADM2_EN'].str.lower()
+district_data['ADM2_EN'] = district_data['ADM2_EN'].str.lower()
 
 # Load the environment data
 env_data = pd.read_excel("data/env_data.xlsx")
-env_data['district'] = env_data['district'].str.lower()
+env_data['district'] = env_data['district'].str.lower().str.strip()
 
-kampala_veg = env_data.loc[env_data['district'] == "kampala", 'vegetation_index'].iloc[0]
-kampala_veg_arr = np.random.normal(loc=kampala_veg, size=365)
-kampala_temp = env_data.loc[env_data['district'] == 'kampala', 'temperature'].iloc[0]
-kampala_temp_arr = np.random.normal(loc=kampala_temp, size=365)
-kampala_rain = env_data.loc[env_data['district'] == 'kampala', 'precipitation'].iloc[0]
-kampala_rain_arr = np.random.normal(loc=kampala_rain, size=365)
-
-kiruhura_veg = env_data.loc[env_data['district'] == "kiruhura", 'vegetation_index'].iloc[0]
-kiruhura_veg_arr = np.random.normal(loc=kiruhura_veg, size=365)
-kiruhura_temp = env_data.loc[env_data['district'] == 'kiruhura', 'temperature'].iloc[0]
-kiruhura_temp_arr = np.random.normal(loc=kiruhura_temp , size=365)
-kiruhura_rain = env_data.loc[env_data['district'] == 'kiruhura', 'precipitation'].iloc[0]
-kiruhura_rain_arr = np.random.normal(loc=kiruhura_rain, size=365)
-
+# Create dictionaries to store the environmental data arrays
+env_arrays = {}
+for district in env_data['district'].unique():
+    veg = env_data.loc[env_data['district'] == district, 'vegetation_index'].iloc[0]
+    temp = env_data.loc[env_data['district'] == district, 'temperature'].iloc[0]
+    rain = env_data.loc[env_data['district'] == district, 'precipitation'].iloc[0]
+    
+    env_arrays[district] = {
+        'veg_arr': np.random.normal(loc=veg, size=365),
+        'temp_arr': np.random.normal(loc=temp, size=365),
+        'rain_arr': np.random.normal(loc=rain, size=365),
+    }
