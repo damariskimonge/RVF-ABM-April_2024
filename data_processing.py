@@ -111,19 +111,33 @@ district_data = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_
 ### Make the district names lower case
 district_data['ADM2_EN'] = district_data['ADM2_EN'].str.lower()
 
+
 # Load the environment data
 env_data = pd.read_excel("data/env_data.xlsx")
 env_data['district'] = env_data['district'].str.lower().str.strip()
 
+# Create a mapping from district names to numeric indices
+district_names = env_data['district'].unique()
+district_to_index = {name: idx for idx, name in enumerate(district_names)}
+
+# Load the daily precipitation data
+precip_data = pd.read_excel("data/precipitation per 12ml.xlsx")
+precip_data['district'] = precip_data['district'].str.lower().str.strip()
+precip_data['date'] = pd.to_datetime(precip_data['date'])
+
 # Create dictionaries to store the environmental data arrays
 env_arrays = {}
-for district in env_data['district'].unique():
+for district in district_names:
+    index = district_to_index[district]
     veg = env_data.loc[env_data['district'] == district, 'vegetation_index'].iloc[0]
     temp = env_data.loc[env_data['district'] == district, 'temperature'].iloc[0]
-    rain = env_data.loc[env_data['district'] == district, 'precipitation'].iloc[0]
+    rain_data = precip_data[precip_data['district'] == district]
+    rain_arr = rain_data.set_index('date')['precipitation'].reindex(pd.date_range('2021-01-01', '2021-12-31'), fill_value=0).values
     
-    env_arrays[district] = {
+    env_arrays[index] = {
         'veg_arr': np.random.normal(loc=veg, size=365),
         'temp_arr': np.random.normal(loc=temp, size=365),
-        'rain_arr': np.random.normal(loc=rain, size=365),
+        'rain_arr': rain_arr,
     }
+
+
