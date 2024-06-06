@@ -3,7 +3,11 @@ Define rvf model.
 """
 
 import os
-os.chdir("C:/Users/angel/OneDrive/Documents/cema/Github/RVF-ABM-April_2024")
+
+# Get the directory of the current script
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir) # Set the current directory to the working directory
+
 
 import numpy as np 
 import pylab as pl
@@ -14,13 +18,30 @@ from data_processing import total_pop # Getting the total population of cattle i
 from data_processing import movement_prob_array # Getting the probability of movement of cattle
 from data_processing import env_arrays # Get the environment data
 from data_processing import date_list # Get the month and year
+from data_processing import prev_by_district # Get the prevalence by district
+
+# Parameters:
+n_contacts = 10
+n_agents = 5000
+pars = sc.objdict(
+    start = 0,
+    end = 1,  # Simulate for 365 days (1 year) for seasonality
+    dt = 1/365, # The default is a year so I'm making it a day
+    dt_demog = 1/365, # also making this a day
+    birth_rate = (32.6/365), #National Animal Census of 2021
+    death_rate = (30/365) # National Animal Census of 2021
+    #total_pop = total_pop # This is so that the values are scaled to the actual population.
+    )
 
 # The disease class
 class RVF(ss.SIS): # RVF class inherits from ss.SIS
 
-    def __init__(self, env_arrays, pars=None, par_dists=None, *args, **kwargs):
+    def __init__(self, env_arrays, district_probabilities, prev_by_district=None, default_prevalence=0.0, pars=None, par_dists=None, *args, **kwargs):
         """ Initialize with parameters """
         self.env_arrays = env_arrays # assigning the environmental data
+        self.district_probabilities = district_probabilities  # assigning district probabilities
+        self.prev_by_district = prev_by_district or {}
+        self.default_prevalence = default_prevalence
 
         pars = ss.dictmergeleft(pars,
             # Natural history parameters, duration specified in days
@@ -49,24 +70,51 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
         # Susceptible and Infected are added automatically
         self.add_states( 
             ss.BoolArr('symptomatic'), # Creates state symptomatic with initial value false
-            ss.FloatArr('ti_symptomatic', float, np.nan), # Create time symptomatic with initial value missing; holds a number
+            ss.FloatArr('ti_symptomatic'), # Create time symptomatic with initial value missing; holds a number
             ss.BoolArr('recovered'), # Creates state recovered with initial value false
-            ss.FloatArr('ti_recovered', float, np.nan), # Create time recovered with inital value missing; holds a number
-            ss.FloatArr('ti_dead', float, np.nan) # Creates time dead; initial is missing; holds a number
+            ss.FloatArr('ti_recovered'), # Create time recovered with inital value missing; holds a number
+            ss.FloatArr('ti_dead') # Creates time dead; initial is missing; holds a number
         )
 
+        return
+
+    def init_vals(self, sim):
+        """ Set initial values for states based on district-specific prevalence """
+        district_vals = sim.people.states['district'].values
+        init_prev = np.zeros(len(sim.people), dtype=bool)
+        
+        for district in np.unique(district_vals):
+            district_mask = (district_vals == district)
+            prevalence = self.prev_by_district.get(district, self.default_prevalence)
+            initial_cases = ss.bernoulli(prevalence).filter(uids=district_mask)
+            init_prev[initial_cases] = True
+        
+        initial_cases = np.where(init_prev)[0]
+        self.set_prognoses(sim, initial_cases)
         return
 
     def initialize(self, sim):
         super().initialize(sim)
         
         # Calculate the baseline susceptibility
-        first_district = next(iter(self.env_arrays))  # Get the first district
-        rain_arr = self.env_arrays[first_district]['rain_arr']
-        veg_arr = self.env_arrays[first_district]['veg_arr']
-        temp_arr = self.env_arrays[first_district]['temp_arr']
-        self.baseline_sus = rain_arr[0] * veg_arr[0] * temp_arr[0]
+        all_rain = []
+        all_veg = []
+        all_temp = []
 
+        for district in self.env_arrays:
+            rain_arr = self.env_arrays[district]['rain_arr']
+            veg_arr = self.env_arrays[district]['veg_arr']
+            temp_arr = self.env_arrays[district]['temp_arr']
+            all_rain.extend(rain_arr)
+            all_veg.extend(veg_arr)
+            all_temp.extend(temp_arr)
+
+        mean_rain = np.mean(all_rain)
+        mean_veg = np.mean(all_veg)
+        mean_temp = np.mean(all_temp)
+
+        self.baseline_sus = mean_rain * mean_veg * mean_temp
+        
     def init_results(self, sim):
         """ Initialize results """
         super().init_results(sim)
@@ -93,10 +141,15 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
             rain_arr = self.env_arrays[district]['rain_arr']
             veg_arr = self.env_arrays[district]['veg_arr']
             temp_arr = self.env_arrays[district]['temp_arr']
-            current_sus = (rain_arr[sim.ti % num_days]) * (veg_arr[sim.ti % num_days]) * (temp_arr[sim.ti % num_days]) # The % operator ensures that the array indices remain within bounds by wrapping around after reaching the end of the array.
+            current_sus =  ((veg_arr[sim.ti % num_days]) * (temp_arr[sim.ti % num_days])) * (rain_arr[sim.ti % num_days])  # The % operator ensures that the array indices remain within bounds by wrapping around after reaching the end of the array.
             self.rel_sus[i] = (current_sus / self.baseline_sus) * (1 - self.immunity[i])   # Calculate relative susceptibility based on environment and immunity
 
-        #super().update_pre(sim) # calling the base classes
+
+        # Identify new births (age == 0)
+        new_births = (sim.people.states['age'] == 0).uids # For some reason there are no new births
+        if len(new_births) > 0:
+            self.assign_new_births_to_districts(sim, new_births)
+
 
         # Progress susceptible -> infected
         infected = (self.ti_infected <= sim.ti).uids
@@ -120,6 +173,16 @@ class RVF(ss.SIS): # RVF class inherits from ss.SIS
             sim.people.request_death(deaths)
         return
      
+    def assign_new_births_to_districts(self, sim, new_uids):
+        # Assign each new individual to a district based on the predefined probabilities
+        districts = np.arange(len(self.district_probabilities))
+        new_districts = np.random.choice(districts, size=len(new_uids), p=self.district_probabilities)
+
+        for i, uid in enumerate(new_uids):
+            sim.people.states['district'][uid] = new_districts[i]
+
+        return
+
     
     def update_immunity(self, sim, recovered_uids=None):
         """ Update immunity levels """
@@ -210,7 +273,6 @@ class Cattle(ss.People):
 
 
 # Initialize the Cattle class with the number of agents, districts, and movement probabilities
-n_agents = 2000
 unique_districts = len(district_probabilities)
 district_values = np.random.choice(unique_districts, size=n_agents, p=district_probabilities)  # Assign initial districts based on population probabilities
 district = ss.FloatArr("district", None, district_values)  # Create the district state for cattle using FloatArr
@@ -263,7 +325,6 @@ class Cattlenetwork(ss.DynamicNetwork): # Inherits from DynamicNetwork
         self.end_pairs(sim.people)
         self.update_contacts_within_district(sim)
 
-n_contacts = 10
 
 # The Intervention Class: Vaccination
 class Vaccination(ss.Intervention):  
@@ -276,7 +337,7 @@ class Vaccination(ss.Intervention):
     def apply(self, sim):
 
         # Define  who is eligible for vaccination
-        eligible_ids = sim.people.uid[rvf.susceptible]  # People are eligible for vacc if they are susceptible
+        eligible_ids = sim.people.uid[disease.susceptible]  # People are eligible for vacc if they are susceptible
         n_eligible = len(eligible_ids) # Number of people who are eligible
 
         # Define who receives  vaccination
@@ -297,23 +358,13 @@ class Vaccination(ss.Intervention):
     # Make contacts zero
     # Stop movement of all cattle in and out of said district
 
-# The intervention
 
 
-# Adding the parameters to the model
-pars = sc.objdict(
-    start = 0,
-    end = 1,  # Simulate for 365 days (1 year) for seasonality
-    dt = 1/365, # The default is a year so I'm making it a day
-    birth_rate = (32.6/365)*1e3, #National Animal Census of 2021
-    death_rate = (30/365)*1e3 # National Animal Census of 2021
-    #total_pop = total_pop # This is so that the values are scaled to the actual population.
-    )
 
-cattle = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states=district)
-cattle_network = networks = Cattlenetwork()
-base_sim = ss.Sim(pars = pars, label = "baseline", people = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states=district), diseases = RVF(env_arrays=env_arrays), networks = Cattlenetwork())
-vacc_sim = ss.Sim(pars= pars, label = "vaccination", people = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states = district), diseases = RVF(env_arrays=env_arrays), interventions = Vaccination(), networks = Cattlenetwork())
+# Running the simulation
+base_sim = ss.Sim(pars = pars, label = "baseline", people = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states=district), diseases = RVF(env_arrays=env_arrays, district_probabilities=district_probabilities, prev_by_district=prev_by_district), networks = Cattlenetwork())
+
+vacc_sim = ss.Sim(pars= pars, label = "vaccination", people = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states = district), diseases = RVF(env_arrays=env_arrays, district_probabilities = district_probabilities), interventions = Vaccination(), networks = Cattlenetwork())
 #quar_sim = ss.Sim(pars = pars, label = "quarantine", people = Cattle(n_agents=n_agents, movement_prob_array=movement_prob_array, extra_states = district), diseases = RVF(env_arrays = env_arrays) interventions = Quarantine(), networks = Cattlenetwork()) 
 
 
@@ -337,81 +388,74 @@ vacc_sim = ss.Sim(pars= pars, label = "vaccination", people = Cattle(n_agents=n_
 #base_index_signs = np.where(base_signs >= 1)[0][0]
 #vacc_index_signs = np.where(vacc_signs >= 1)[0][0]
     
-# Make plots:
-# First is susceptible
-# Second is infected
-# 2b is symptomatic
-# Third is recovered
-# Fourth is dead
-# Others are first sign
-# Others are first death
-# Compare the three scenarios here
+
+def plot_n_susceptible():
+    pl.figure()
+    pl.plot(date_list, (base_sim.results.rvf.n_susceptible)[:len(date_list)], color="blue", label="Susceptible")
+    pl.title('RVF Number of Susceptible', fontsize=20)  # Title of the plot
+    pl.xlabel('Time in days', fontsize=12)  # X-axis title
+    pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
+    pl.legend()
+    pl.show()   
+
+plot_n_susceptible()
+
 def plot_n_infected():
     pl.figure()
     pl.plot(date_list, base_sim.results.rvf.n_infected[:len(date_list)], color="black", label="Number Infected") # The results are truncated to be only one year
-    #pl.axvline(10, color="black", linestyle='--')  # First sign
-    #pl.axvline(12, color="black")  # First death
     pl.title('RVF Number of Infected', fontsize=20)  # Title of the plot
     pl.xlabel('Time in days', fontsize=12)  # X-axis title
     pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
     pl.legend()
     pl.show()
-    
 
-#plot_n_infected()
+plot_n_infected()
 
 def plot_n_symptomatic():
     pl.figure()
-    pl.plot(date_list, (base_sim.results.rvf.n_infected * 0.07)[:len(date_list)], color="blue", label="Symptomatic Cases")
-    #pl.axvline(10, color="black", linestyle='--')  # First sign
-    #pl.axvline(12, color="black")  # First death
+    pl.plot(date_list, (base_sim.results.rvf.n_symptomatic)[:len(date_list)], color="blue", label="Symptomatic Cases")
     pl.title('RVF Number of Infected', fontsize=20)  # Title of the plot
     pl.xlabel('Time in days', fontsize=12)  # X-axis title
     pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
     pl.legend()
-    pl.show()
-    
+    pl.show()   
 
-#plot_n_symptomatic()
+plot_n_symptomatic()
 
-#def plot_new_deaths():
- #   pl.figure()
-  #  pl.plot(date_list, (base_sim.results.rvf.new_deaths[:len(date_list)]), color="red", label="New Deaths")
-    #pl.axvline(10, color="black", linestyle='--')  # First sign
-    #pl.axvline(12, color="black")  # First death
-  #  pl.title('RVF Number of Infected', fontsize=20)  # Title of the plot
-  #  pl.xlabel('Time in days', fontsize=12)  # X-axis title
-  #  pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
-  #  pl.legend()
-  #  pl.show()
-
-#plot_new_deaths()
-    
-#def plot_cum_deaths():
- #   pl.figure()
- #   pl.plot(date_list, (base_sim.results.rvf.cum_deaths[:len(date_list)]), color="green", label="Cumulative Deaths")
-    #pl.axvline(10, color="black", linestyle='--')  # First sign
-    #pl.axvline(12, color="black")  # First death
- #   pl.title('RVF Number of Infected', fontsize=20)  # Title of the plot
- #   pl.xlabel('Time in days', fontsize=12)  # X-axis title
- #   pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
- #   pl.legend()
- #   pl.show()
-    
-#plot_cum_deaths()
-
-def plot_new_infections():
+def plot_n_recovered():
     pl.figure()
-    pl.plot(date_list, (base_sim.results.rvf.new_infections[:len(date_list)]), color="orange", label="New Infections")
-    #pl.axvline(10, color="black", linestyle='--')  # First sign
-    #pl.axvline(12, color="black")  # First death
-    pl.title('RVF Number of Infected', fontsize=20)  # Title of the plot
+    pl.plot(date_list, (base_sim.results.rvf.n_recovered)[:len(date_list)], color="blue", label="Recovered")
+    pl.title('RVF Number of Recovered', fontsize=20)  # Title of the plot
     pl.xlabel('Time in days', fontsize=12)  # X-axis title
     pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
     pl.legend()
-    pl.show()
-    
-#plot_new_infections()
+    pl.show()   
+
+plot_n_recovered()
+
+def plot_n_dead(): # The cumulative deaths
+    pl.figure()
+    pl.plot(date_list, (base_sim.results.rvf.cum_deaths)[:len(date_list)], color="blue", label="Cumulative Deaths")
+    pl.title('RVF Cumulative Deaths', fontsize=20)  # Title of the plot
+    pl.xlabel('Time in days', fontsize=12)  # X-axis title
+    pl.ylabel('Number of Cattle', fontsize=12)  # Y-axis title
+    pl.legend()
+    pl.show()   
+
+plot_n_dead()
+
+def plot_rel_sus():
+    pl.figure()
+    pl.plot(date_list, (base_sim.results.rvf.rel_sus)[:len(date_list)], color="blue", label="Relative susceptibility")
+    pl.title('RVF Relative Susceptibility', fontsize=20)  # Title of the plot
+    pl.xlabel('Time in days', fontsize=12)  # X-axis title
+    pl.ylabel('Relative Susceptibility', fontsize=12)  # Y-axis title
+    pl.legend()
+    pl.show()   
+
+plot_rel_sus()
+
+
 
 
 

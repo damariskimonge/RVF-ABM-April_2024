@@ -1,16 +1,17 @@
 # Processing Data
-# Last updated 2nd May 2024
+# Last updated 6th June 2024
 
 import os
-import geopandas as gpd
-#import rasterio
-#import rasterio.mask  
-#from rasterio.windows import from_bounds
+
+### Set working directory
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
+
+#import geopandas as gpd # To read the shp file
 import pandas as pd
 import numpy as np
 
-### set working directory
-os.chdir("C:/Users/angel/OneDrive/Documents/cema/Github/RVF-ABM-April_2024")
+
 
 ## Creating a date object for plotting:
 from datetime import datetime, timedelta
@@ -31,8 +32,13 @@ prev_data = prev_data[prev_data['host'] == 'Bovine']
 ### filter date_sample  within 2021
 prev_data['date_sample'] = pd.to_datetime(prev_data['date_sample'], format='mixed')
 prev_data = prev_data[prev_data['date_sample'].dt.year == 2021]
-## Find prevalence
-prev_data = prev_data[(prev_data['district'].isin(['kampala', 'kiruhura']))]
+# Create a column to count each sample
+prev_data['total_sampled'] = 1
+# Create a column indicating whether the sample tested positive
+prev_data['positive_cases'] = prev_data['rvf_status'].apply(lambda x: 1 if x == 'Positive' else 0)
+# Calculate prevalence by district
+prev_by_district = prev_data.groupby('district')[['positive_cases', 'total_sampled']].apply(lambda x: x['positive_cases'].sum() / x['total_sampled'].sum()).to_dict()
+
 ### TO DO: Vera suggests using relative risk.
 
 
@@ -107,10 +113,9 @@ movement_prob_array = movement_prob_matrix.to_numpy()
 
 
 # Load the district data 
-district_data = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
+#district_data = gpd.read_file('data/shapefile/uga_admbnda_ubos_20200824_shp/uga_admbnda_adm2_ubos_20200824.shp')
 ### Make the district names lower case
-district_data['ADM2_EN'] = district_data['ADM2_EN'].str.lower()
-
+#district_data['ADM2_EN'] = district_data['ADM2_EN'].str.lower()
 
 # Load the environment data
 env_data = pd.read_excel("data/env_data.xlsx")
@@ -129,15 +134,16 @@ precip_data['date'] = pd.to_datetime(precip_data['date'])
 env_arrays = {}
 for district in district_names:
     index = district_to_index[district]
-    veg = env_data.loc[env_data['district'] == district, 'vegetation_index'].iloc[0]
-    temp = env_data.loc[env_data['district'] == district, 'temperature'].iloc[0]
+    veg = env_data.loc[env_data['district'] == district, 'vegetation_index'].iloc[0] * 0.0001
+    temp = env_data.loc[env_data['district'] == district, 'temperature'].iloc[0] + 15
     rain_data = precip_data[precip_data['district'] == district]
     rain_arr = rain_data.set_index('date')['precipitation'].reindex(pd.date_range('2021-01-01', '2021-12-31'), fill_value=0).values
     
     env_arrays[index] = {
-        'veg_arr': np.random.normal(loc=veg, size=365),
+        'veg_arr': np.abs(np.random.normal(loc=veg, size=365)),
         'temp_arr': np.random.normal(loc=temp, size=365),
         'rain_arr': rain_arr,
     }
+
 
 
